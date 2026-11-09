@@ -32,6 +32,7 @@ internal sealed class TrayContext : ApplicationContext
     public TrayContext(bool startMinimized)
     {
         Store = new SettingsStore(AppPaths.SettingsFile);
+        _log.LogDirectory = SafeLoad().EffectiveLogFolder;
         ImportLegacySettings();
 
         _statusItem = new ToolStripMenuItem("Starting…") { Enabled = false };
@@ -48,7 +49,7 @@ internal sealed class TrayContext : ApplicationContext
             _pauseItem,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Open target folder", null, (_, _) => Shell.Open(SafeLoad().TargetFolder)),
-            new ToolStripMenuItem("Open log folder", null, (_, _) => Shell.Open(AppPaths.LogDirectory)),
+            new ToolStripMenuItem("Open log folder", null, (_, _) => Shell.Open(LogFolderToShow)),
             _startupItem,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Exit", null, (_, _) => Exit()),
@@ -80,6 +81,21 @@ internal sealed class TrayContext : ApplicationContext
     public SettingsStore Store { get; }
 
     public MoverLog Log => _log;
+
+    /// <summary>Today's log file to display: the configured folder, or the fallback if that is where lines went.</summary>
+    public string TodaysLogFile
+    {
+        get
+        {
+            var configured = MoverLog.FileFor(_log.LogDirectory, DateTime.Now);
+            var fallback = MoverLog.FileFor(_log.FallbackDirectory, DateTime.Now);
+            if (_log.ActiveDirectory != _log.LogDirectory)
+                return fallback; // this process could not write to the configured folder
+            return File.Exists(configured) || !File.Exists(fallback) ? configured : fallback;
+        }
+    }
+
+    public string LogFolderToShow => Path.GetDirectoryName(TodaysLogFile)!;
 
     public bool Exiting { get; private set; }
 
@@ -164,6 +180,10 @@ internal sealed class TrayContext : ApplicationContext
         {
             StartStandaloneEngine();
         }
+
+        // In standalone mode EngineHost applies the log folder (and logs the change); otherwise follow settings here.
+        if (_host is null)
+            _log.LogDirectory = SafeLoad().EffectiveLogFolder;
 
         var snap = GetSnapshot();
         _statusItem.Text = Truncate(snap.Status.Message, 60);

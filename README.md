@@ -75,11 +75,16 @@ This works the same whether the files are moved by the tray app or by the Window
   "SweepIntervalSeconds": 300,
   "StageNewFolders": true,
   "Paused": false,
-  "LogRetentionDays": 30
+  "LogRetentionDays": 30,
+  "LogFolder": "C:\\Saw\\Logs"
 }
 ```
 
 Changes to this file are picked up automatically. Nothing needs restarting.
+
+`LogFolder` sets where the daily `Saw_Mover-yyyy-MM-dd.log` files go. Set it with **Log folder** on the Settings tab, or leave it blank for `%ProgramData%\AutoFileMover\Logs`.
+If the folder can't be written (a drive is missing, or the service has no access), log lines go to the default folder until it is available again. A note is written there when that happens.
+Only `Saw_Mover-*.log` files older than `LogRetentionDays` are ever deleted, so a shared folder is safe to use.
 
 `JobNameSource` is either `FileContent` or `FileName`.
 `ContentPattern` is a regular expression, matched line by line over the first 64 KB of the file. Its `job` group (or its first group) becomes the folder name.

@@ -94,6 +94,13 @@ public sealed class MoverSettings
 
     public int LogRetentionDays { get; set; } = 30;
 
+    /// <summary>Where the daily Saw_Mover-yyyy-MM-dd.log files go. Blank = %ProgramData%\AutoFileMover\Logs.</summary>
+    public string LogFolder { get; set; } = "";
+
+    /// <summary>The log folder actually used (the default when <see cref="LogFolder"/> is blank).</summary>
+    [JsonIgnore]
+    public string EffectiveLogFolder => string.IsNullOrWhiteSpace(LogFolder) ? AppPaths.LogDirectory : LogFolder.Trim();
+
     public MoverSettings Clone()
     {
         var copy = (MoverSettings)MemberwiseClone();
@@ -151,6 +158,8 @@ public sealed class MoverSettings
             errors.Add("settle time must be between 1 and 3600 seconds");
         if (SweepIntervalSeconds is < 10 or > 86400)
             errors.Add("sweep interval must be between 10 and 86400 seconds");
+        if (!string.IsNullOrWhiteSpace(LogFolder) && !Path.IsPathFullyQualified(LogFolder.Trim()))
+            errors.Add("log folder must be a full path (or blank for the default)");
         if (LogRetentionDays is < 1 or > 3650)
             errors.Add("log retention must be between 1 and 3650 days");
 

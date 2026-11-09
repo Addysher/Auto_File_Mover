@@ -11,7 +11,17 @@ public sealed class MoverWorker(ILogger<MoverWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var store = new SettingsStore(AppPaths.SettingsFile);
         var log = new MoverLog(AppPaths.LogDirectory);
+        try
+        {
+            log.LogDirectory = store.Load().EffectiveLogFolder; // so the start-up lines land in the chosen folder too
+        }
+        catch
+        {
+            // Bad settings file: EngineHost reports it.
+        }
+
         log.EntryWritten += entry =>
         {
             if (entry.Level == MoverLogLevel.Error)
@@ -22,7 +32,7 @@ public sealed class MoverWorker(ILogger<MoverWorker> logger) : BackgroundService
 
         log.Info($"Service started (v{typeof(MoverWorker).Assembly.GetName().Version?.ToString(3)}, account {Environment.UserDomainName}\\{Environment.UserName}).");
 
-        var host = new EngineHost(log, new SettingsStore(AppPaths.SettingsFile)) { PublishStatusFile = true };
+        var host = new EngineHost(log, store) { PublishStatusFile = true };
         try
         {
             await host.RunAsync(stoppingToken);

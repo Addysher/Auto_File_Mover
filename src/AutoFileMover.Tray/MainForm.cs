@@ -10,6 +10,7 @@ internal sealed class MainForm : Form
 
     private readonly TextBox _source = new() { Dock = DockStyle.Fill };
     private readonly TextBox _target = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _logFolder = new() { Dock = DockStyle.Fill, PlaceholderText = $"default: {AppPaths.LogDirectory}" };
     private readonly (TextBox Name, TextBox Path)[] _destinations =
         Enumerable.Range(1, MoverSettings.MaxDestinationsInUi)
             .Select(i => (new TextBox { Width = 140, PlaceholderText = i == 1 ? "e.g. Saw 1" : "e.g. Saw 2" },
@@ -135,6 +136,8 @@ internal sealed class MainForm : Form
         for (var i = 0; i < _destinations.Length; i++)
             AddDestinationRow(grid, $"Destination {i + 1}:", _destinations[i].Name, _destinations[i].Path);
         AddRow(grid, "", Hint("Jobs tab: where job folders go next. Name is optional (defaults to the folder name)."));
+        AddFolderRow(grid, "Log folder:", _logFolder);
+        AddRow(grid, "", Hint("Daily Saw_Mover-yyyy-MM-dd.log files. Leave blank for the default."));
 
         AddRow(grid, "Job name from:", Flow(_jobSource, Hint("MiTek saw files carry the job on their \"M1\" header line")));
         AddRow(grid, "Header pattern:", Flow(_pattern, _patternReset));
@@ -160,7 +163,7 @@ internal sealed class MainForm : Form
         logPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         logPanel.Controls.Add(_logBox);
         var openLogs = new LinkLabel { Text = "Open log folder", AutoSize = true };
-        openLogs.LinkClicked += (_, _) => Shell.Open(AppPaths.LogDirectory);
+        openLogs.LinkClicked += (_, _) => Shell.Open(_ctx.LogFolderToShow);
         logPanel.Controls.Add(openLogs);
         logTab.Controls.Add(logPanel);
 
@@ -261,6 +264,7 @@ internal sealed class MainForm : Form
         _settle.Value = Math.Clamp(s.SettleSeconds, (int)_settle.Minimum, (int)_settle.Maximum);
         _sweep.Value = Math.Clamp(s.SweepIntervalSeconds, (int)_sweep.Minimum, (int)_sweep.Maximum);
         _stage.Checked = s.StageNewFolders;
+        _logFolder.Text = s.LogFolder;
         UpdateJobNameControls();
         UpdatePreview();
     }
@@ -292,6 +296,7 @@ internal sealed class MainForm : Form
             s.SettleSeconds = (int)_settle.Value;
             s.SweepIntervalSeconds = (int)_sweep.Value;
             s.StageNewFolders = _stage.Checked;
+            s.LogFolder = _logFolder.Text.Trim();
 
             var errors = s.Validate();
             if (errors.Count > 0)
@@ -307,6 +312,8 @@ internal sealed class MainForm : Form
                 warnings.Add($"Target folder does not exist: {s.TargetFolder}");
             foreach (var d in s.Destinations.Where(d => !Directory.Exists(d.Path)))
                 warnings.Add($"Destination \"{d.DisplayName}\" does not exist: {d.Path}");
+            if (s.LogFolder.Length > 0 && !CanWriteTo(s.LogFolder, out var why))
+                warnings.Add($"Cannot write to the log folder ({why}). Logs will go to {AppPaths.LogDirectory} until it is available.");
             if (warnings.Count > 0 &&
                 MessageBox.Show(string.Join("\n", warnings) + "\n\nSave anyway?", "Auto File Mover",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
@@ -320,6 +327,25 @@ internal sealed class MainForm : Form
         {
             TrayContext.ShowError($"Could not save settings:\n{ex.Message}\n\n" +
                                   "If the Windows service is installed, run install-service.ps1 as administrator so normal users may edit settings.");
+        }
+    }
+
+    /// <summary>Creates the folder if needed and writes/deletes a probe file.</summary>
+    private static bool CanWriteTo(string folder, out string reason)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            var probe = Path.Combine(folder, $".afm-write-test-{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            reason = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            reason = ex.Message;
+            return false;
         }
     }
 
@@ -395,7 +421,7 @@ internal sealed class MainForm : Form
         _serviceStart.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Stopped;
         _serviceStop.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Running;
 
-        var lines = LogReader.ReadTail(MoverLog.FileFor(AppPaths.LogDirectory, DateTime.Now), 300);
+        var lines = LogReader.ReadTail(_ctx.TodaysLogFile, 300);
         var text = string.Join(Environment.NewLine, lines);
         if (text != _lastLogText)
         {

@@ -63,6 +63,13 @@ public sealed class EngineHost
                 }
 
                 _log.RetentionDays = settings.LogRetentionDays;
+                if (!string.Equals(_log.LogDirectory, settings.EffectiveLogFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    var previous = _log.LogDirectory;
+                    _log.Info($"Log folder changed to \"{settings.EffectiveLogFolder}\".");
+                    _log.LogDirectory = settings.EffectiveLogFolder;
+                    _log.Info($"Log folder set (previously \"{previous}\").");
+                }
 
                 var errors = settings.Validate();
                 if (errors.Count > 0)
