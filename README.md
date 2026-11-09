@@ -95,6 +95,13 @@ Requires the .NET 10 SDK (pinned in global.json).
 .\publish.ps1          # runs tests, then builds self-contained single-file exes into .\publish
 ```
 
+The app icon (`assets\AutoFileMover.ico`) is drawn in code (`IconArt` in the tray project), and so are the coloured tray icons. After changing the design, regenerate the `.ico` and preview it with:
+
+```powershell
+.\publish\AutoFileMover.exe --export-icon "$PWD\assets\AutoFileMover.ico" | Out-Null
+.\publish\AutoFileMover.exe --export-icon-preview "$env:TEMP\icon-preview.png" | Out-Null
+```
+
 ## Install: tray app only
 
 1. Copy `publish\AutoFileMover.exe` anywhere, e.g. `C:\Program Files\AutoFileMover\`.

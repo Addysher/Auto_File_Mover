@@ -5,6 +5,20 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Developer helpers: regenerate the .ico / a preview sheet from the code-drawn artwork.
+        if (args is ["--export-icon", var icoPath])
+        {
+            File.WriteAllBytes(icoPath, IconArt.BuildIco(IconArt.Brand, IconArt.IcoSizes));
+            return;
+        }
+
+        if (args is ["--export-icon-preview", var pngPath])
+        {
+            using var sheet = IconArt.RenderPreview();
+            sheet.Save(pngPath, System.Drawing.Imaging.ImageFormat.Png);
+            return;
+        }
+
         using var mutex = new Mutex(initiallyOwned: true, @"Local\AutoFileMover.Tray", out var isFirst);
         if (!isFirst)
         {

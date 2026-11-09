@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
         _ctx = ctx;
 
         Text = "Auto File Mover";
-        Icon = TrayIcons.For(EngineState.Idle);
+        Icon = IconArt.AppIcon;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(820, 600);
         Size = new Size(1000, 760);
@@ -394,7 +394,6 @@ internal sealed class MainForm : Form
         _pause.Text = snap.Paused ? "Resume" : "Pause";
         _serviceStart.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Stopped;
         _serviceStop.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Running;
-        Icon = TrayIcons.For(snap.Status.State);
 
         var lines = LogReader.ReadTail(MoverLog.FileFor(AppPaths.LogDirectory, DateTime.Now), 300);
         var text = string.Join(Environment.NewLine, lines);
