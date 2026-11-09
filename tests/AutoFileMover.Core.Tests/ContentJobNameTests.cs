@@ -34,7 +34,7 @@ public sealed class ContentJobNameTests : IDisposable
     private MovePass NewPass() => new(_settings, new MoverLog(Path.Combine(_root, "logs")), _clock);
 
     [Fact]
-    public void Default_pattern_reads_job_from_real_mitek_sample()
+    public void Default_pattern_reads_job_from_mitek_style_sample()
     {
         Assert.Equal("12345ABC", JobNamer.GetJobNameFromContent(Sample, JobNamer.CreateContentRegex(null)));
     }

@@ -4,3 +4,6 @@ publish/
 .vs/
 *.user
 TestResults/
+
+# Client sample files - keep local, never commit
+Resources/
