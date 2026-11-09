@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Version>2.0.0</Version>
+    <Product>Auto File Mover</Product>
+    <Company>Addysher</Company>
+    <Copyright>GPL-3.0</Copyright>
+  </PropertyGroup>
+</Project>
