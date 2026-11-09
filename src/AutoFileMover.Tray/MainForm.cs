@@ -10,7 +10,11 @@ internal sealed class MainForm : Form
 
     private readonly TextBox _source = new() { Dock = DockStyle.Fill };
     private readonly TextBox _target = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _sendTo = new() { Dock = DockStyle.Fill };
+    private readonly (TextBox Name, TextBox Path)[] _destinations =
+        Enumerable.Range(1, MoverSettings.MaxDestinationsInUi)
+            .Select(i => (new TextBox { Width = 140, PlaceholderText = i == 1 ? "e.g. Saw 1" : "e.g. Saw 2" },
+                          new TextBox { Dock = DockStyle.Fill, PlaceholderText = i == 1 ? "" : "optional" }))
+            .ToArray();
     private readonly JobsPanel _jobs;
     private readonly NumericUpDown _strip = new() { Minimum = 0, Maximum = 100, Width = 70 };
     private readonly NumericUpDown _settle = new() { Minimum = 1, Maximum = 3600, Width = 70 };
@@ -128,8 +132,9 @@ internal sealed class MainForm : Form
 
         AddFolderRow(grid, "Source folder:", _source);
         AddFolderRow(grid, "Target folder:", _target);
-        AddFolderRow(grid, "Send-to folder:", _sendTo);
-        AddRow(grid, "", Hint("Jobs tab: where job folders go next (optional)"));
+        for (var i = 0; i < _destinations.Length; i++)
+            AddDestinationRow(grid, $"Destination {i + 1}:", _destinations[i].Name, _destinations[i].Path);
+        AddRow(grid, "", Hint("Jobs tab: where job folders go next. Name is optional (defaults to the folder name)."));
 
         AddRow(grid, "Job name from:", Flow(_jobSource, Hint("MiTek saw files carry the job on their \"M1\" header line")));
         AddRow(grid, "Header pattern:", Flow(_pattern, _patternReset));
@@ -188,6 +193,27 @@ internal sealed class MainForm : Form
         grid.Controls.Add(browse);
     }
 
+    private void AddDestinationRow(TableLayoutPanel grid, string label, TextBox name, TextBox path)
+    {
+        var browse = new Button { Text = "Browse…", AutoSize = true };
+        browse.Click += (_, _) =>
+        {
+            using var dialog = new FolderBrowserDialog { SelectedPath = path.Text, UseDescriptionForTitle = true, Description = label.TrimEnd(':') };
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+                path.Text = dialog.SelectedPath;
+        };
+
+        var pair = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
+        pair.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pair.Controls.Add(name);
+        pair.Controls.Add(path);
+
+        grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left });
+        grid.Controls.Add(pair);
+        grid.Controls.Add(browse);
+    }
+
     private static void AddRow(TableLayoutPanel grid, string label, Control control)
     {
         grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left });
@@ -220,7 +246,13 @@ internal sealed class MainForm : Form
 
         _source.Text = s.SourceFolder;
         _target.Text = s.TargetFolder;
-        _sendTo.Text = s.SendToFolder;
+        for (var i = 0; i < _destinations.Length; i++)
+        {
+            var d = i < s.Destinations.Count ? s.Destinations[i] : null;
+            _destinations[i].Name.Text = d?.Name ?? "";
+            _destinations[i].Path.Text = d?.Path ?? "";
+        }
+
         _jobs.ApplySettings(s);
         _jobSource.SelectedIndex = s.JobNameSource == JobNameSource.FileName ? 1 : 0;
         _pattern.Text = s.ContentPattern;
@@ -249,7 +281,13 @@ internal sealed class MainForm : Form
 
             s.SourceFolder = _source.Text.Trim();
             s.TargetFolder = _target.Text.Trim();
-            s.SendToFolder = _sendTo.Text.Trim();
+            // Rows beyond what the UI shows (hand-edited settings.json) are kept as they are.
+            var extra = s.Destinations.Skip(_destinations.Length).ToList();
+            s.Destinations = _destinations
+                .Where(d => d.Path.Text.Trim().Length > 0)
+                .Select(d => new SendToDestination { Name = d.Name.Text.Trim(), Path = d.Path.Text.Trim() })
+                .Concat(extra)
+                .ToList();
             ApplyJobNameFields(s);
             s.SettleSeconds = (int)_settle.Value;
             s.SweepIntervalSeconds = (int)_sweep.Value;
@@ -267,8 +305,8 @@ internal sealed class MainForm : Form
                 warnings.Add($"Source folder does not exist (yet): {s.SourceFolder}");
             if (!Directory.Exists(s.TargetFolder))
                 warnings.Add($"Target folder does not exist: {s.TargetFolder}");
-            if (s.SendToFolder.Length > 0 && !Directory.Exists(s.SendToFolder))
-                warnings.Add($"Send-to folder does not exist: {s.SendToFolder}");
+            foreach (var d in s.Destinations.Where(d => !Directory.Exists(d.Path)))
+                warnings.Add($"Destination \"{d.DisplayName}\" does not exist: {d.Path}");
             if (warnings.Count > 0 &&
                 MessageBox.Show(string.Join("\n", warnings) + "\n\nSave anyway?", "Auto File Mover",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)

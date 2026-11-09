@@ -1,7 +1,29 @@
+using System.Text.Json.Serialization;
+
 namespace AutoFileMover.Core;
+
+/// <summary>A place job folders can be sent to from the Jobs tab (e.g. "Saw 1" → \\saw1\queue).</summary>
+public sealed class SendToDestination
+{
+    public string Name { get; set; } = "";
+
+    public string Path { get; set; } = "";
+
+    /// <summary>Name if given, otherwise the folder's own name.</summary>
+    [JsonIgnore]
+    public string DisplayName =>
+        Name.Trim().Length > 0 ? Name.Trim()
+        : Path.Trim().Length > 0 ? System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(Path.Trim())) is { Length: > 0 } leaf ? leaf : Path.Trim()
+        : "Destination";
+
+    public SendToDestination Copy() => new() { Name = Name, Path = Path };
+}
 
 public sealed class MoverSettings
 {
+    /// <summary>How many destinations the settings window offers (Core itself supports any number).</summary>
+    public const int MaxDestinationsInUi = 2;
+
     /// <summary>Folder the saw software drops files into.</summary>
     public string SourceFolder { get; set; } = "";
 
@@ -9,9 +31,34 @@ public sealed class MoverSettings
     public string TargetFolder { get; set; } = "";
 
     /// <summary>
-    /// Where job folders go next from the Jobs tab (e.g. the saw's queue). Optional; only the tray UI uses it.
+    /// Where job folders can go next from the Jobs tab (e.g. a saw's queue). Optional; only the tray UI uses them.
     /// </summary>
-    public string SendToFolder { get; set; } = "";
+    public List<SendToDestination> Destinations { get; set; } = [];
+
+    /// <summary>Old single send-to folder (v2.0). Read for migration only; folded into <see cref="Destinations"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SendToFolder { get; set; }
+
+    /// <summary>Migrates the old single folder and drops empty destination rows.</summary>
+    public MoverSettings Normalize()
+    {
+        Destinations ??= [];
+        if (!string.IsNullOrWhiteSpace(SendToFolder) &&
+            !Destinations.Any(d => string.Equals(d.Path.Trim(), SendToFolder.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            Destinations.Insert(0, new SendToDestination { Path = SendToFolder.Trim() });
+        }
+
+        SendToFolder = null;
+        Destinations.RemoveAll(d => d is null || string.IsNullOrWhiteSpace(d.Path));
+        foreach (var d in Destinations)
+        {
+            d.Name = d.Name?.Trim() ?? "";
+            d.Path = d.Path.Trim();
+        }
+
+        return this;
+    }
 
     /// <summary>Where the job folder name comes from.</summary>
     public JobNameSource JobNameSource { get; set; } = JobNameSource.FileContent;
@@ -47,7 +94,12 @@ public sealed class MoverSettings
 
     public int LogRetentionDays { get; set; } = 30;
 
-    public MoverSettings Clone() => (MoverSettings)MemberwiseClone();
+    public MoverSettings Clone()
+    {
+        var copy = (MoverSettings)MemberwiseClone();
+        copy.Destinations = (Destinations ?? []).Select(d => d.Copy()).ToList();
+        return copy;
+    }
 
     public List<string> Validate()
     {
@@ -66,12 +118,19 @@ public sealed class MoverSettings
         if (errors.Count == 0 && PathsEqual(SourceFolder, TargetFolder))
             errors.Add("source and target folders must be different");
 
-        if (!string.IsNullOrWhiteSpace(SendToFolder))
+        var destinations = (Destinations ?? []).Where(d => !string.IsNullOrWhiteSpace(d.Path)).ToList();
+        for (var i = 0; i < destinations.Count; i++)
         {
-            if (!Path.IsPathFullyQualified(SendToFolder))
-                errors.Add("send-to folder must be a full path");
-            else if (PathsEqual(SendToFolder, TargetFolder) || PathsEqual(SendToFolder, SourceFolder))
-                errors.Add("send-to folder must be different from the source and target folders");
+            var d = destinations[i];
+            var label = $"destination {i + 1} ({d.DisplayName})";
+            if (!Path.IsPathFullyQualified(d.Path))
+                errors.Add($"{label} must be a full path");
+            else if (PathsEqual(d.Path, TargetFolder) || PathsEqual(d.Path, SourceFolder))
+                errors.Add($"{label} must be different from the source and target folders");
+            else if (destinations.Take(i).Any(o => PathsEqual(o.Path, d.Path)))
+                errors.Add($"{label} uses the same folder as another destination");
+            else if (destinations.Take(i).Any(o => string.Equals(o.DisplayName, d.DisplayName, StringComparison.OrdinalIgnoreCase)))
+                errors.Add($"{label} needs a different name from the other destination");
         }
 
         if (JobNameSource == JobNameSource.FileContent)

@@ -1,9 +1,9 @@
-﻿# Auto File Mover 2.0 (C#)
+# Auto File Mover 2.0 (C#)
 
 Moves saw output files from a drop folder into one folder per job.
 
 By default, the job name is **read from inside each file**: it is the second field on the MiTek `M1` header line.
-For example, `12345ABC__STR-01.mme` contains `M1 12345ABC Stringer â€¦`, so it goes to `Target\12345ABC\`.
+For example, `12345ABC__STR-01.mme` contains `M1 12345ABC Stringer …`, so it goes to `Target\12345ABC\`.
 Files with no matching header are left in place and logged.
 Alternatively, you can use the old file-name rule: the name without its extension and without its last *N* characters (default 3).
 You can also use the file-name rule only as a fallback for files that have no header.
@@ -39,7 +39,7 @@ The tray app's **Jobs** tab shows two lists side by side:
 - **Target (jobs ready)**: the job folders the automatic mover has built (DataOut).
 - **Send-to folder**: where jobs go next, e.g. the saw queue. Set it on the **Settings** tab.
 
-To move whole job folders, select them (Ctrl/Shift-click for several, Ctrl+A for all) and click **→** or **←**, or drag them from one list to the other.
+To move whole job folders, select them (Ctrl/Shift-click for several, Ctrl+A for all) and click **?** or **?**, or drag them from one list to the other.
 - On the same drive a move is an instant rename. Across drives or to a server, the files are copied and the originals deleted.
 - If a job already exists on the other side, the app asks before merging. Same-named files are overwritten.
 - Files that are open in another program stay where they are and are reported. Move the job again later to finish.
@@ -51,8 +51,8 @@ This works the same whether the files are moved by the tray app or by the Window
 
 ```
 %ProgramData%\AutoFileMover\
-    settings.json      â† shared by service + tray app
-    status.json        â† live status written by the service
+    settings.json      ← shared by service + tray app
+    status.json        ← live status written by the service
     Logs\Saw_Mover-2026-11-09.log
 ```
 
@@ -62,7 +62,10 @@ This works the same whether the files are moved by the tray app or by the Window
 {
   "SourceFolder": "C:\\Users\\Me\\OneDrive\\Documents\\MiTek\\DataIn",
   "TargetFolder": "C:\\Users\\Me\\OneDrive\\Documents\\MiTek\\DataOut",
-  "SendToFolder": "\\\\saw-pc\\SawQueue",
+  "Destinations": [
+    { "Name": "Saw 1", "Path": "\\\\saw1-pc\\SawQueue" },
+    { "Name": "Saw 2", "Path": "\\\\saw2-pc\\SawQueue" }
+  ],
   "JobNameSource": "FileContent",
   "ContentPattern": "^M1\\s+(?<job>\\S+)",
   "FallbackToFileName": false,
@@ -79,7 +82,8 @@ Changes to this file are picked up automatically. Nothing needs restarting.
 
 `JobNameSource` is either `FileContent` or `FileName`.
 `ContentPattern` is a regular expression, matched line by line over the first 64 KB of the file. Its `job` group (or its first group) becomes the folder name.
-In the settings window, **Test a fileâ€¦** shows which folder a real file would go to before you save.
+In the settings window, **Test a file…** shows which folder a real file would go to before you save.
+`Destinations` can hold more than two entries if they are added by hand. The settings window edits the first two and leaves any others untouched. An old single `SendToFolder` value is converted to Destination 1 automatically.
 On first start, the tray app imports `source_folder` / `target_folder` from an old `settings.ini` if it finds one next to the exe.
 
 ## Build

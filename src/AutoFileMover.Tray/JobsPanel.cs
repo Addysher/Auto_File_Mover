@@ -3,16 +3,19 @@ using AutoFileMover.Core;
 namespace AutoFileMover.Tray;
 
 /// <summary>
-/// Two job lists side by side — the target folder (where the engine drops jobs) and the
-/// send-to folder — with arrow buttons and drag-and-drop to move whole job folders between them.
+/// Two job lists side by side: the target folder (where the engine drops jobs) on the left, and a
+/// send-to destination on the right (picked from a drop-down when more than one is configured).
+/// Whole job folders move with the arrow buttons, drag-and-drop, or the right-click "Send to" menu.
 /// </summary>
 internal sealed class JobsPanel : UserControl
 {
     private const string DragFormat = "AutoFileMover.JobPaths";
+    private const string TargetName = "Target";
 
     private readonly TrayContext _ctx;
     private readonly JobList _left;
     private readonly JobList _right;
+    private readonly ComboBox _destinationPicker = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly Button _toRight = ArrowButton("→");
     private readonly Button _toLeft = ArrowButton("←");
     private readonly Button _refresh = new() { Text = "Refresh", AutoSize = true };
@@ -21,8 +24,11 @@ internal sealed class JobsPanel : UserControl
     private readonly System.Windows.Forms.Timer _debounce = new() { Interval = 700 };
     private readonly ToolTip _tips = new();
 
+    private List<SendToDestination> _destinations = [];
+    private string _targetRoot = "";
     private int _version;
     private bool _busy;
+    private bool _applying;
 
     public JobsPanel(TrayContext ctx)
     {
@@ -30,14 +36,18 @@ internal sealed class JobsPanel : UserControl
         Dock = DockStyle.Fill;
         Padding = new Padding(6);
 
-        _left = new JobList(this, "Target (jobs ready)");
-        _right = new JobList(this, "Send-to folder");
+        _left = new JobList(this, "left", null);
+        _right = new JobList(this, "right", _destinationPicker);
 
-        _tips.SetToolTip(_toRight, "Move selected jobs to the send-to folder");
-        _tips.SetToolTip(_toLeft, "Move selected jobs back to the target folder");
-
-        _toRight.Click += async (_, _) => await MoveAsync(_left, _right, _left.SelectedPaths());
-        _toLeft.Click += async (_, _) => await MoveAsync(_right, _left, _right.SelectedPaths());
+        _destinationPicker.SelectedIndexChanged += (_, _) =>
+        {
+            if (_applying)
+                return;
+            ShowDestination(_destinationPicker.SelectedIndex);
+            _ = ReloadAsync();
+        };
+        _toRight.Click += async (_, _) => await MoveAsync(_left.SelectedPaths(), _left.Name, _right.Root, _right.Name);
+        _toLeft.Click += async (_, _) => await MoveAsync(_right.SelectedPaths(), _right.Name, _left.Root, _left.Name);
         _refresh.Click += async (_, _) => await ReloadAsync();
         _filter.TextChanged += (_, _) => { _left.Populate(_filter.Text); _right.Populate(_filter.Text); UpdateButtons(); };
         _debounce.Tick += async (_, _) =>
@@ -52,8 +62,23 @@ internal sealed class JobsPanel : UserControl
 
     public void ApplySettings(MoverSettings settings)
     {
-        _left.SetRoot(settings.TargetFolder, "Set the target folder on the Settings tab");
-        _right.SetRoot(settings.SendToFolder, "Choose a send-to folder on the Settings tab");
+        _targetRoot = settings.TargetFolder;
+        _destinations = settings.Destinations.Select(d => d.Copy()).ToList();
+        _left.SetRoot(settings.TargetFolder, TargetName, "Set the target folder on the Settings tab");
+
+        // Keep showing the same destination if it still exists.
+        var previous = _right.Name;
+        _applying = true;
+        _destinationPicker.Items.Clear();
+        foreach (var d in _destinations)
+            _destinationPicker.Items.Add(d.DisplayName);
+        var index = Math.Max(0, _destinations.FindIndex(d => d.DisplayName == previous));
+        if (_destinations.Count > 0)
+            _destinationPicker.SelectedIndex = index;
+        _destinationPicker.Enabled = _destinations.Count > 1;
+        _applying = false;
+
+        ShowDestination(_destinations.Count > 0 ? index : -1);
         _ = ReloadAsync();
     }
 
@@ -75,6 +100,18 @@ internal sealed class JobsPanel : UserControl
         }
 
         base.Dispose(disposing);
+    }
+
+    private void ShowDestination(int index)
+    {
+        if (index >= 0 && index < _destinations.Count)
+            _right.SetRoot(_destinations[index].Path, _destinations[index].DisplayName, "");
+        else
+            _right.SetRoot("", "Send-to", "Add a destination on the Settings tab");
+
+        _tips.SetToolTip(_toRight, $"Move selected jobs to {_right.Name}");
+        _tips.SetToolTip(_toLeft, $"Move selected jobs back to the {TargetName.ToLowerInvariant()} folder");
+        UpdateButtons();
     }
 
     private Control BuildLayout()
@@ -150,23 +187,35 @@ internal sealed class JobsPanel : UserControl
         UpdateButtons();
     }
 
-    private async Task MoveAsync(JobList from, JobList to, IReadOnlyList<string> paths)
+    /// <summary>Every place a job could be sent from the given side (for the right-click menu).</summary>
+    private IEnumerable<(string Name, string Root)> OtherPlaces(JobList from)
+    {
+        if (from == _right && _targetRoot.Length > 0)
+            yield return ($"{TargetName} folder", _targetRoot);
+        foreach (var d in _destinations)
+        {
+            if (!string.Equals(d.Path, from.Root, StringComparison.OrdinalIgnoreCase))
+                yield return (d.DisplayName, d.Path);
+        }
+    }
+
+    private async Task MoveAsync(IReadOnlyList<string> paths, string fromName, string toRoot, string toName)
     {
         if (_busy || paths.Count == 0)
             return;
 
-        if (!to.RootExists)
+        if (toRoot.Length == 0 || !Directory.Exists(toRoot))
         {
-            TrayContext.ShowError($"{to.Title} is not available:\n{to.Root}");
+            TrayContext.ShowError($"{toName} is not available:\n{toRoot}");
             return;
         }
 
-        var clashes = paths.Where(p => JobFolders.ExistsIn(p, to.Root)).Select(Path.GetFileName).ToList();
+        var clashes = paths.Where(p => JobFolders.ExistsIn(p, toRoot)).Select(Path.GetFileName).ToList();
         if (clashes.Count > 0)
         {
             var names = string.Join(", ", clashes.Take(10)) + (clashes.Count > 10 ? $" and {clashes.Count - 10} more" : "");
             var answer = MessageBox.Show(this,
-                $"{clashes.Count} job(s) already exist in the {to.Title.ToLowerInvariant()}:\n{names}\n\n" +
+                $"{clashes.Count} job(s) already exist in {toName}:\n{names}\n\n" +
                 "Merge into the existing folders? Files with the same name will be overwritten.",
                 "Auto File Mover", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes)
@@ -175,26 +224,28 @@ internal sealed class JobsPanel : UserControl
 
         _busy = true;
         UpdateButtons();
-        _status.Text = $"Moving {paths.Count} job(s)…";
+        _status.Text = $"Moving {paths.Count} job(s) to {toName}…";
 
-        var destination = to.Root;
-        var results = await Task.Run(() => paths.Select(p => JobFolders.Move(p, destination)).ToList());
+        var results = await Task.Run(() => paths.Select(p => JobFolders.Move(p, toRoot)).ToList());
 
         var log = _ctx.Log;
         foreach (var r in results)
         {
             if (r.Success)
-                log.Info($"Job {r.Job} moved {from.ShortName} -> {to.ShortName}{(r.Merged ? " (merged into existing folder)" : "")} ({r.FilesMoved} file(s)).");
+                log.Info($"Job {r.Job} moved {fromName} -> {toName}{(r.Merged ? " (merged into existing folder)" : "")} ({r.FilesMoved} file(s)).");
             else
-                log.Warning($"Job {r.Job} could not be fully moved {from.ShortName} -> {to.ShortName}: {string.Join("; ", r.Errors)}");
+                log.Warning($"Job {r.Job} could not be fully moved {fromName} -> {toName}: {string.Join("; ", r.Errors)}");
         }
 
         var ok = results.Count(r => r.Success);
-        _status.Text = $"Moved {ok} of {results.Count} job(s) to the {to.Title.ToLowerInvariant()} at {DateTime.Now:HH:mm}.";
+        _status.Text = $"Moved {ok} of {results.Count} job(s) to {toName} at {DateTime.Now:HH:mm}.";
 
         _busy = false;
         await ReloadAsync();
-        to.Select(results.Where(r => r.Success).Select(r => r.Job));
+        var landedIn = string.Equals(toRoot, _left.Root, StringComparison.OrdinalIgnoreCase) ? _left
+            : string.Equals(toRoot, _right.Root, StringComparison.OrdinalIgnoreCase) ? _right
+            : null;
+        landedIn?.Select(results.Where(r => r.Success).Select(r => r.Job));
 
         var failed = results.Where(r => !r.Success).ToList();
         if (failed.Count > 0)
@@ -205,33 +256,48 @@ internal sealed class JobsPanel : UserControl
         }
     }
 
-    /// <summary>One side: header, list view, cached jobs and a folder watcher.</summary>
+    /// <summary>One side: header, list view, cached jobs, context menu and a folder watcher.</summary>
     private sealed class JobList : IDisposable
     {
         private readonly JobsPanel _owner;
-        private readonly Label _title = new() { AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont!, FontStyle.Bold) };
-        private readonly LinkLabel _path = new() { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, Height = 22 };
+        private readonly string _id;
+        private readonly Label _title = new() { AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont!, FontStyle.Bold), Anchor = AnchorStyles.Left };
+        private readonly LinkLabel _path = new() { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Top, Height = 22 };
         private readonly ToolTip _pathTip = new();
+        private readonly ContextMenuStrip _menu = new();
         private List<JobFolderInfo> _jobs = [];
         private FileSystemWatcher? _watcher;
         private int _sortColumn;
         private bool _sortDescending;
 
-        public JobList(JobsPanel owner, string title)
+        public JobList(JobsPanel owner, string id, Control? picker)
         {
             _owner = owner;
-            Title = title;
+            _id = id;
 
             Header = new TableLayoutPanel { ColumnCount = 1, RowCount = 2, AutoSize = true, Dock = DockStyle.Fill };
             Header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            Header.Controls.Add(_title);
+            Header.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            Header.RowStyles.Add(new RowStyle(SizeType.Absolute, 22)); // one line; long paths end in "…"
+            if (picker is null)
+            {
+                Header.Controls.Add(_title);
+            }
+            else
+            {
+                var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Dock = DockStyle.Fill, Margin = Padding.Empty };
+                row.Controls.Add(picker);
+                row.Controls.Add(_title);
+                Header.Controls.Add(row);
+            }
+
             Header.Controls.Add(_path);
             _path.LinkClicked += (_, _) => Shell.Open(Root);
 
             View = new ListView
             {
                 Dock = DockStyle.Fill, View = System.Windows.Forms.View.Details, FullRowSelect = true, MultiSelect = true,
-                HideSelection = false, AllowDrop = true, GridLines = false,
+                HideSelection = false, AllowDrop = true, ContextMenuStrip = _menu,
             };
             View.Columns.Add("Job", 200);
             View.Columns.Add("Files", 60, HorizontalAlignment.Right);
@@ -258,11 +324,13 @@ internal sealed class JobsPanel : UserControl
                 }
             };
 
+            _menu.Opening += (_, e) => BuildMenu(e);
+
             View.ItemDrag += (_, _) =>
             {
                 if (_owner._busy || View.SelectedItems.Count == 0)
                     return;
-                var payload = Title + "\n" + string.Join("\n", SelectedPaths());
+                var payload = _id + "\n" + Name + "\n" + string.Join("\n", SelectedPaths());
                 View.DoDragDrop(new DataObject(DragFormat, payload), DragDropEffects.Move);
             };
             View.DragOver += (_, e) => e.Effect = CanAccept(e.Data) ? DragDropEffects.Move : DragDropEffects.None;
@@ -271,19 +339,16 @@ internal sealed class JobsPanel : UserControl
                 if (!CanAccept(e.Data) || e.Data?.GetData(DragFormat) is not string payload)
                     return;
                 var lines = payload.Split('\n');
-                var from = lines[0] == _owner._left.Title ? _owner._left : _owner._right;
-                await _owner.MoveAsync(from, this, lines.Skip(1).ToList());
+                await _owner.MoveAsync(lines.Skip(2).ToList(), lines[1], Root, Name);
             };
         }
 
-        public string Title { get; }
+        /// <summary>Display name of the folder currently shown (used in log lines and messages).</summary>
+        public string Name { get; private set; } = "";
 
         public string Root { get; private set; } = "";
 
         public TableLayoutPanel Header { get; }
-
-        /// <summary>Folder name for log lines, e.g. "DataOut".</summary>
-        public string ShortName => Root.Length == 0 ? Title : Path.GetFileName(Path.TrimEndingDirectorySeparator(Root));
 
         public ListView View { get; }
 
@@ -291,13 +356,16 @@ internal sealed class JobsPanel : UserControl
 
         public bool HasSelection => View.SelectedItems.Count > 0;
 
-        public void SetRoot(string root, string whenEmpty)
+        public void SetRoot(string root, string name, string whenEmpty)
         {
             Root = root?.Trim() ?? "";
+            Name = name;
             _path.Text = Root.Length == 0 ? whenEmpty : Root;
             _path.LinkArea = Root.Length == 0 ? new LinkArea(0, 0) : new LinkArea(0, Root.Length);
             _pathTip.SetToolTip(_path, Root.Length == 0 ? "" : Root + "\n(click to open)");
             View.Enabled = Root.Length > 0;
+            _jobs = [];
+            Populate(_owner._filter.Text);
             RecreateWatcher();
         }
 
@@ -342,7 +410,9 @@ internal sealed class JobsPanel : UserControl
 
             var shown = View.Items.Count;
             var noun = _jobs.Count == 1 ? "job" : "jobs";
-            _title.Text = shown == _jobs.Count ? $"{Title}  ({_jobs.Count} {noun})" : $"{Title}  ({shown} of {_jobs.Count} {noun})";
+            var count = shown == _jobs.Count ? $"({_jobs.Count} {noun})" : $"({shown} of {_jobs.Count} {noun})";
+            // The left side shows its name in the title; the right side's name is in the drop-down.
+            _title.Text = _id == "left" ? $"{Name}  {count}" : count;
         }
 
         public void Select(IEnumerable<string> jobNames)
@@ -367,13 +437,47 @@ internal sealed class JobsPanel : UserControl
         {
             DisposeWatcher();
             _pathTip.Dispose();
+            _menu.Dispose();
+        }
+
+        private void BuildMenu(System.ComponentModel.CancelEventArgs e)
+        {
+            _menu.Items.Clear();
+            var paths = SelectedPaths();
+            if (paths.Count == 0 || _owner._busy)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (paths.Count == 1)
+                _menu.Items.Add("Open in Explorer", null, (_, _) => Shell.Open(paths[0]));
+
+            var places = _owner.OtherPlaces(this).ToList();
+            if (places.Count > 0)
+            {
+                var sendTo = new ToolStripMenuItem(paths.Count == 1 ? "Send to" : $"Send {paths.Count} jobs to");
+                foreach (var (name, root) in places)
+                {
+                    var item = new ToolStripMenuItem(name, null, async (_, _) => await _owner.MoveAsync(paths, Name, root, name))
+                    {
+                        Enabled = Directory.Exists(root),
+                        ToolTipText = root,
+                    };
+                    sendTo.DropDownItems.Add(item);
+                }
+
+                _menu.Items.Add(sendTo);
+            }
+
+            e.Cancel = _menu.Items.Count == 0;
         }
 
         private bool CanAccept(IDataObject? data)
         {
             if (_owner._busy || !RootExists || data?.GetDataPresent(DragFormat) != true)
                 return false;
-            return data.GetData(DragFormat) is string payload && !payload.StartsWith(Title + "\n", StringComparison.Ordinal);
+            return data.GetData(DragFormat) is string payload && !payload.StartsWith(_id + "\n", StringComparison.Ordinal);
         }
 
         private void RecreateWatcher()

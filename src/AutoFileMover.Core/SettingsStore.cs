@@ -34,7 +34,7 @@ public sealed class SettingsStore
             return reader.ReadToEnd();
         });
 
-        return JsonSerializer.Deserialize<MoverSettings>(json, JsonOptions) ?? new MoverSettings();
+        return (JsonSerializer.Deserialize<MoverSettings>(json, JsonOptions) ?? new MoverSettings()).Normalize();
     }
 
     /// <summary>Writes atomically (temp file + rename) so a reader never sees half a file.</summary>
