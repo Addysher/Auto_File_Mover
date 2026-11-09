@@ -108,21 +108,37 @@ public sealed class MoverSettings
         return copy;
     }
 
-    public List<string> Validate()
+    /// <param name="requireFolders">
+    /// True (the engine): source and target must both be filled in.
+    /// False (saving from the settings window): a folder that is simply not filled in yet is fine,
+    /// so settings can be saved one step at a time; only genuinely wrong values are reported.
+    /// </param>
+    public List<string> Validate(bool requireFolders = true)
     {
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(SourceFolder))
-            errors.Add("source folder is not set");
+        {
+            if (requireFolders)
+                errors.Add("source folder is not set");
+        }
         else if (!Path.IsPathFullyQualified(SourceFolder))
+        {
             errors.Add("source folder must be a full path (e.g. C:\\Saw\\DataIn or \\\\server\\share\\DataIn)");
+        }
 
         if (string.IsNullOrWhiteSpace(TargetFolder))
-            errors.Add("target folder is not set");
+        {
+            if (requireFolders)
+                errors.Add("target folder is not set");
+        }
         else if (!Path.IsPathFullyQualified(TargetFolder))
+        {
             errors.Add("target folder must be a full path");
+        }
 
-        if (errors.Count == 0 && PathsEqual(SourceFolder, TargetFolder))
+        if (errors.Count == 0 && !string.IsNullOrWhiteSpace(SourceFolder) && !string.IsNullOrWhiteSpace(TargetFolder)
+            && PathsEqual(SourceFolder, TargetFolder))
             errors.Add("source and target folders must be different");
 
         var destinations = (Destinations ?? []).Where(d => !string.IsNullOrWhiteSpace(d.Path)).ToList();

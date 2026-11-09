@@ -17,6 +17,15 @@ internal sealed class MainForm : Form
                           new TextBox { Dock = DockStyle.Fill, PlaceholderText = i == 1 ? "" : "optional" }))
             .ToArray();
     private readonly JobsPanel _jobs;
+    private readonly Button _save = new() { Text = "Save", AutoSize = true };
+    private readonly Label _unsaved = new()
+    {
+        Text = "Unsaved changes", AutoSize = true, Visible = false, Anchor = AnchorStyles.Left,
+        ForeColor = Color.DarkOrange, Font = new Font(SystemFonts.MessageBoxFont!, FontStyle.Bold),
+    };
+    private TabControl _tabs = null!;
+    private TabPage _settingsTab = null!;
+    private bool _dirty;
     private readonly NumericUpDown _strip = new() { Minimum = 0, Maximum = 100, Width = 70 };
     private readonly NumericUpDown _settle = new() { Minimum = 1, Maximum = 3600, Width = 70 };
     private readonly NumericUpDown _sweep = new() { Minimum = 10, Maximum = 86400, Width = 70, Increment = 30 };
@@ -79,8 +88,17 @@ internal sealed class MainForm : Form
         _strip.ValueChanged += (_, _) => UpdatePreview();
 
         _timer.Tick += (_, _) => RefreshStatus();
+        _status.Click += (_, _) =>
+        {
+            if (_ctx.GetSnapshot().Status.State == EngineState.NotConfigured)
+                _tabs.SelectedTab = _settingsTab;
+        };
         LoadSettings();
         RefreshStatus();
+
+        // Nothing set up yet? Open straight on the Settings tab.
+        if (LoadStored().Validate().Count > 0)
+            _tabs.SelectedTab = _settingsTab;
     }
 
     protected override void OnVisibleChanged(EventArgs e)
@@ -102,6 +120,20 @@ internal sealed class MainForm : Form
         if (e.CloseReason == CloseReason.UserClosing && !_ctx.Exiting)
         {
             e.Cancel = true;
+            UpdateDirty();
+            if (_dirty)
+            {
+                var answer = MessageBox.Show(this, "You have unsaved settings. Save them now?", "Auto File Mover",
+                    MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (answer == DialogResult.Cancel || (answer == DialogResult.Yes && !SaveSettings()))
+                    return; // stay open
+                if (answer == DialogResult.No)
+                {
+                    LoadSettings(); // drop the edits
+                    UpdateDirty();
+                }
+            }
+
             Hide();
             return;
         }
@@ -116,9 +148,9 @@ internal sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var tabs = new TabControl { Dock = DockStyle.Fill };
+        var tabs = _tabs = new TabControl { Dock = DockStyle.Fill };
         var jobsTab = new TabPage("Jobs");
-        var settingsTab = new TabPage("Settings") { AutoScroll = true, Padding = new Padding(6) };
+        var settingsTab = _settingsTab = new TabPage("Settings") { AutoScroll = true, Padding = new Padding(6) };
         var logTab = new TabPage("Log") { Padding = new Padding(6) };
         tabs.TabPages.AddRange([jobsTab, settingsTab, logTab]);
         jobsTab.Controls.Add(_jobs);
@@ -131,12 +163,12 @@ internal sealed class MainForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-        AddFolderRow(grid, "Source folder:", _source);
-        AddFolderRow(grid, "Target folder:", _target);
+        AddFolderRow(grid, "Source folder:", _source, (s, path) => s.SourceFolder = path);
+        AddFolderRow(grid, "Target folder:", _target, (s, path) => s.TargetFolder = path);
         for (var i = 0; i < _destinations.Length; i++)
-            AddDestinationRow(grid, $"Destination {i + 1}:", _destinations[i].Name, _destinations[i].Path);
+            AddDestinationRow(grid, $"Destination {i + 1}:", _destinations[i].Name, _destinations[i].Path, i);
         AddRow(grid, "", Hint("Jobs tab: where job folders go next. Name is optional (defaults to the folder name)."));
-        AddFolderRow(grid, "Log folder:", _logFolder);
+        AddFolderRow(grid, "Log folder:", _logFolder, (s, path) => s.LogFolder = path);
         AddRow(grid, "", Hint("Daily Saw_Mover-yyyy-MM-dd.log files. Leave blank for the default."));
 
         AddRow(grid, "Job name from:", Flow(_jobSource, Hint("MiTek saw files carry the job on their \"M1\" header line")));
@@ -148,11 +180,11 @@ internal sealed class MainForm : Form
         AddRow(grid, "Full sweep every (s):", Flow(_sweep, Hint("backup re-scan; new files are normally picked up within seconds")));
         AddRow(grid, "", _stage);
 
-        var save = new Button { Text = "Save", AutoSize = true };
         var revert = new Button { Text = "Revert", AutoSize = true };
-        save.Click += (_, _) => SaveSettings();
-        revert.Click += (_, _) => LoadSettings();
-        AddRow(grid, "", Flow(save, revert));
+        _save.Click += (_, _) => SaveSettings();
+        revert.Click += (_, _) => { LoadSettings(); UpdateDirty(); };
+        AddRow(grid, "", Flow(_save, revert, _unsaved));
+        AddRow(grid, "", Hint("Folders picked with Browse… are saved straight away. Typed changes need Save."));
 
         settingsBox.Controls.Add(grid);
         settingsTab.Controls.Add(settingsBox);
@@ -182,28 +214,33 @@ internal sealed class MainForm : Form
         return root;
     }
 
-    private void AddFolderRow(TableLayoutPanel grid, string label, TextBox box)
+    /// <summary>A folder row whose Browse… button saves the chosen folder immediately (like the original program).</summary>
+    private void AddFolderRow(TableLayoutPanel grid, string label, TextBox box, Action<MoverSettings, string> persist)
     {
         var browse = new Button { Text = "Browse…", AutoSize = true };
         browse.Click += (_, _) =>
         {
             using var dialog = new FolderBrowserDialog { SelectedPath = box.Text, UseDescriptionForTitle = true, Description = label.TrimEnd(':') };
-            if (dialog.ShowDialog(this) == DialogResult.OK)
-                box.Text = dialog.SelectedPath;
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+            box.Text = dialog.SelectedPath;
+            SaveField(s => persist(s, dialog.SelectedPath));
         };
         grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left });
         grid.Controls.Add(box);
         grid.Controls.Add(browse);
     }
 
-    private void AddDestinationRow(TableLayoutPanel grid, string label, TextBox name, TextBox path)
+    private void AddDestinationRow(TableLayoutPanel grid, string label, TextBox name, TextBox path, int index)
     {
         var browse = new Button { Text = "Browse…", AutoSize = true };
         browse.Click += (_, _) =>
         {
             using var dialog = new FolderBrowserDialog { SelectedPath = path.Text, UseDescriptionForTitle = true, Description = label.TrimEnd(':') };
-            if (dialog.ShowDialog(this) == DialogResult.OK)
-                path.Text = dialog.SelectedPath;
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+            path.Text = dialog.SelectedPath;
+            SaveField(s => SetDestination(s, index, name.Text.Trim(), dialog.SelectedPath));
         };
 
         var pair = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -269,46 +306,102 @@ internal sealed class MainForm : Form
         UpdatePreview();
     }
 
-    private void SaveSettings()
+    /// <summary>The stored settings, or defaults if the file can't be read.</summary>
+    private MoverSettings LoadStored()
     {
         try
         {
-            MoverSettings s;
-            try
-            {
-                s = _ctx.Store.Load(); // keep Paused / retention etc.
-            }
-            catch
-            {
-                s = new MoverSettings();
-            }
+            return _ctx.Store.Load();
+        }
+        catch
+        {
+            return new MoverSettings();
+        }
+    }
 
-            s.SourceFolder = _source.Text.Trim();
-            s.TargetFolder = _target.Text.Trim();
-            // Rows beyond what the UI shows (hand-edited settings.json) are kept as they are.
-            var extra = s.Destinations.Skip(_destinations.Length).ToList();
-            s.Destinations = _destinations
-                .Where(d => d.Path.Text.Trim().Length > 0)
-                .Select(d => new SendToDestination { Name = d.Name.Text.Trim(), Path = d.Path.Text.Trim() })
-                .Concat(extra)
-                .ToList();
-            ApplyJobNameFields(s);
-            s.SettleSeconds = (int)_settle.Value;
-            s.SweepIntervalSeconds = (int)_sweep.Value;
-            s.StageNewFolders = _stage.Checked;
-            s.LogFolder = _logFolder.Text.Trim();
+    /// <summary>Copies every field in the window onto <paramref name="s"/> (which keeps Paused, retention, etc.).</summary>
+    private MoverSettings BuildFromForm(MoverSettings s)
+    {
+        s.SourceFolder = _source.Text.Trim();
+        s.TargetFolder = _target.Text.Trim();
+        // Rows beyond what the UI shows (hand-edited settings.json) are kept as they are.
+        var extra = s.Destinations.Skip(_destinations.Length).ToList();
+        s.Destinations = _destinations
+            .Where(d => d.Path.Text.Trim().Length > 0)
+            .Select(d => new SendToDestination { Name = d.Name.Text.Trim(), Path = d.Path.Text.Trim() })
+            .Concat(extra)
+            .ToList();
+        ApplyJobNameFields(s);
+        s.SettleSeconds = (int)_settle.Value;
+        s.SweepIntervalSeconds = (int)_sweep.Value;
+        s.StageNewFolders = _stage.Checked;
+        s.LogFolder = _logFolder.Text.Trim();
+        return s;
+    }
 
-            var errors = s.Validate();
+    /// <summary>Sets destination row <paramref name="index"/> in stored settings, leaving the other rows as stored.</summary>
+    private void SetDestination(MoverSettings s, int index, string name, string path)
+    {
+        var rows = Enumerable.Range(0, _destinations.Length)
+            .Select(i => i < s.Destinations.Count ? s.Destinations[i].Copy() : new SendToDestination())
+            .ToList();
+        rows[index] = new SendToDestination { Name = name, Path = path };
+        var extra = s.Destinations.Skip(_destinations.Length);
+        s.Destinations = rows.Where(r => r.Path.Trim().Length > 0).Concat(extra).ToList();
+    }
+
+    /// <summary>Saves one change (from a Browse… button) on top of the stored settings, without touching other unsaved edits.</summary>
+    private void SaveField(Action<MoverSettings> apply)
+    {
+        try
+        {
+            var s = LoadStored();
+            apply(s);
+            var errors = s.Validate(requireFolders: false);
             if (errors.Count > 0)
             {
-                TrayContext.ShowError("Please fix:\n• " + string.Join("\n• ", errors));
+                TrayContext.ShowError("Not saved - please fix:\n• " + string.Join("\n• ", errors));
                 return;
             }
 
+            _ctx.Store.Save(s);
+            _jobs.ApplySettings(s);
+            RefreshStatus();
+        }
+        catch (Exception ex)
+        {
+            TrayContext.ShowError($"Could not save settings:\n{ex.Message}");
+        }
+    }
+
+    /// <summary>Shows "Save *" / "Unsaved changes" when the window differs from what is stored.</summary>
+    private void UpdateDirty()
+    {
+        var stored = LoadStored();
+        var fromForm = BuildFromForm(stored.Clone());
+        _dirty = SettingsStore.Serialize(stored) != SettingsStore.Serialize(fromForm);
+        _save.Text = _dirty ? "Save *" : "Save";
+        _unsaved.Visible = _dirty;
+    }
+
+    private bool SaveSettings()
+    {
+        try
+        {
+            var s = BuildFromForm(LoadStored());
+
+            // Only block on values that are wrong; folders not filled in yet are fine (the mover waits).
+            var errors = s.Validate(requireFolders: false);
+            if (errors.Count > 0)
+            {
+                TrayContext.ShowError("Please fix:\n• " + string.Join("\n• ", errors));
+                return false;
+            }
+
             var warnings = new List<string>();
-            if (!Directory.Exists(s.SourceFolder))
+            if (s.SourceFolder.Length > 0 && !Directory.Exists(s.SourceFolder))
                 warnings.Add($"Source folder does not exist (yet): {s.SourceFolder}");
-            if (!Directory.Exists(s.TargetFolder))
+            if (s.TargetFolder.Length > 0 && !Directory.Exists(s.TargetFolder))
                 warnings.Add($"Target folder does not exist: {s.TargetFolder}");
             foreach (var d in s.Destinations.Where(d => !Directory.Exists(d.Path)))
                 warnings.Add($"Destination \"{d.DisplayName}\" does not exist: {d.Path}");
@@ -317,16 +410,18 @@ internal sealed class MainForm : Form
             if (warnings.Count > 0 &&
                 MessageBox.Show(string.Join("\n", warnings) + "\n\nSave anyway?", "Auto File Mover",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-                return;
+                return false;
 
             _ctx.Store.Save(s);
             _jobs.ApplySettings(s);
             RefreshStatus();
+            return true;
         }
         catch (Exception ex)
         {
             TrayContext.ShowError($"Could not save settings:\n{ex.Message}\n\n" +
                                   "If the Windows service is installed, run install-service.ps1 as administrator so normal users may edit settings.");
+            return false;
         }
     }
 
@@ -409,6 +504,8 @@ internal sealed class MainForm : Form
     {
         var snap = _ctx.GetSnapshot();
         _status.Text = snap.Status.Message;
+        _status.Cursor = snap.Status.State == EngineState.NotConfigured ? Cursors.Hand : Cursors.Default;
+        UpdateDirty();
         _status.ForeColor = snap.Status.State switch
         {
             EngineState.Problem => Color.Firebrick,

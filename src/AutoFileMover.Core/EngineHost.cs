@@ -75,7 +75,8 @@ public sealed class EngineHost
                 if (errors.Count > 0)
                 {
                     _log.Warning($"Not moving files - settings incomplete: {string.Join("; ", errors)}.");
-                    SetStatus(EngineStatus.Now(EngineState.NotConfigured, "Not configured: " + errors[0]));
+                    SetStatus(EngineStatus.Now(EngineState.NotConfigured,
+                        $"Not configured: {string.Join("; ", errors)} - set it on the Settings tab"));
                     await WaitForSettingsChangeAsync(json, ct).ConfigureAwait(false);
                     continue;
                 }

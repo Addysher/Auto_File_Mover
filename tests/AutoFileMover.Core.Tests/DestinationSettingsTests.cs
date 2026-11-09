@@ -66,6 +66,23 @@ public sealed class DestinationSettingsTests
     }
 
     [Fact]
+    public void Partially_filled_settings_can_be_saved_but_engine_still_requires_folders()
+    {
+        // Regression: Save refused to store a source folder until the target was also set.
+        var s = new MoverSettings { SourceFolder = @"C:\Saw\In" };
+
+        Assert.Empty(s.Validate(requireFolders: false));                          // window may save it
+        Assert.Contains(s.Validate(), e => e.Contains("target folder is not set")); // engine waits for target
+        Assert.DoesNotContain(s.Validate(), e => e.Contains("source folder"));
+
+        // Genuinely wrong values are still blocked when saving.
+        s.TargetFolder = @"C:\Saw\In\";
+        Assert.Contains(s.Validate(requireFolders: false), e => e.Contains("must be different"));
+        s.TargetFolder = @"relative";
+        Assert.Contains(s.Validate(requireFolders: false), e => e.Contains("full path"));
+    }
+
+    [Fact]
     public void Empty_rows_are_dropped()
     {
         var s = Base();
