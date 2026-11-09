@@ -36,10 +36,11 @@ If the service is not installed, the tray app moves the files itself. A lock fil
 ## Jobs tab: moving job folders onward
 
 The tray app's **Jobs** tab shows two lists side by side:
-- **Target (jobs ready)**: the job folders the automatic mover has built (DataOut).
-- **Send-to folder**: where jobs go next, e.g. the saw queue. Set it on the **Settings** tab.
+- **Target**: the job folders the automatic mover has built (DataOut).
+- **A destination**: where jobs go next, e.g. a saw's queue. Set up **Destination 1** and, optionally, **Destination 2** on the **Settings** tab. Each one has a name (e.g. "Saw 1") and a folder. When two are set, a drop-down above the right-hand list chooses which one is shown.
 
-To move whole job folders, select them (Ctrl/Shift-click for several, Ctrl+A for all) and click **?** or **?**, or drag them from one list to the other.
+To move whole job folders, select them (Ctrl/Shift-click for several, Ctrl+A for all) and click **→** or **←**, or drag them from one list to the other.
+You can also **right-click → Send to** to send jobs straight to any destination, or back to the target. This works from either list, so a job can also go directly from Saw 1 to Saw 2.
 - On the same drive a move is an instant rename. Across drives or to a server, the files are copied and the originals deleted.
 - If a job already exists on the other side, the app asks before merging. Same-named files are overwritten.
 - Files that are open in another program stay where they are and are reported. Move the job again later to finish.
