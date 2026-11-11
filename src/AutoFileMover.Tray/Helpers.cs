@@ -120,7 +120,7 @@ internal static class IconArt
     public static Bitmap RenderPreview()
     {
         int[] sizes = [16, 20, 24, 32, 48, 64, 128, 256];
-        var colors = new[] { Brand, Color.FromArgb(46, 160, 67), Color.FromArgb(9, 105, 218), Color.FromArgb(191, 135, 0), Color.FromArgb(207, 34, 46), Color.FromArgb(110, 118, 129) };
+        var colors = new[] { Brand, Color.FromArgb(46, 160, 67), Color.FromArgb(9, 105, 218), Color.FromArgb(207, 34, 46), Color.FromArgb(110, 118, 129) };
         var width = sizes.Sum() + 20 * (sizes.Length + 1);
         var rowsHeight = 256 + 40;
         var trayRow = 24 * 2 + 30;
@@ -233,8 +233,8 @@ internal static class TrayIcons
     {
         EngineState.Idle => Color.FromArgb(46, 160, 67),
         EngineState.Waiting => Color.FromArgb(9, 105, 218),
-        EngineState.Problem => Color.FromArgb(207, 34, 46),
-        EngineState.NotConfigured or EngineState.Blocked => Color.FromArgb(191, 135, 0),
+        // Red = anything that needs attention (a problem, missing settings, another copy running).
+        EngineState.Problem or EngineState.NotConfigured or EngineState.Blocked => Color.FromArgb(207, 34, 46),
         _ => Color.FromArgb(110, 118, 129),
     });
 

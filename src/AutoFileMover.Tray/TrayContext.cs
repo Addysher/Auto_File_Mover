@@ -7,7 +7,7 @@ internal sealed record Snapshot(bool ServiceInstalled, ServiceControllerStatus? 
 {
     public string ModeText => ServiceInstalled
         ? $"Controlling the Windows service ({ServiceState})"
-        : "Standalone — this app is moving the files";
+        : ""; // standalone: nothing extra to say
 }
 
 /// <summary>

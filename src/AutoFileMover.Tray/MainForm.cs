@@ -171,20 +171,19 @@ internal sealed class MainForm : Form
         AddFolderRow(grid, "Log folder:", _logFolder, (s, path) => s.LogFolder = path);
         AddRow(grid, "", Hint("Daily Saw_Mover-yyyy-MM-dd.log files. Leave blank for the default."));
 
-        AddRow(grid, "Job name from:", Flow(_jobSource, Hint("MiTek saw files carry the job on their \"M1\" header line")));
+        AddRow(grid, "Job name from:", Flow(_jobSource));
         AddRow(grid, "Header pattern:", Flow(_pattern, _patternReset));
         AddRow(grid, "", _fallback);
         AddRow(grid, "Characters to strip:", Flow(_strip, Hint("file-name rule: removed from the end of the name (before the extension)")));
         AddRow(grid, "Test:", Flow(_sample, _pickSample, _samplePreview));
-        AddRow(grid, "Settle time (s):", Flow(_settle, Hint("a file must be unchanged and closed this long before it is moved")));
-        AddRow(grid, "Full sweep every (s):", Flow(_sweep, Hint("backup re-scan; new files are normally picked up within seconds")));
+        AddRow(grid, "Settle time (s):", Flow(_settle));
+        AddRow(grid, "Full sweep every (s):", Flow(_sweep));
         AddRow(grid, "", _stage);
 
         var revert = new Button { Text = "Revert", AutoSize = true };
         _save.Click += (_, _) => SaveSettings();
         revert.Click += (_, _) => { LoadSettings(); UpdateDirty(); };
         AddRow(grid, "", Flow(_save, revert, _unsaved));
-        AddRow(grid, "", Hint("Folders picked with Browse… are saved straight away. Typed changes need Save."));
 
         settingsBox.Controls.Add(grid);
         settingsTab.Controls.Add(settingsBox);
@@ -508,12 +507,12 @@ internal sealed class MainForm : Form
         UpdateDirty();
         _status.ForeColor = snap.Status.State switch
         {
-            EngineState.Problem => Color.Firebrick,
-            EngineState.NotConfigured or EngineState.Blocked => Color.DarkGoldenrod,
+            EngineState.Problem or EngineState.NotConfigured or EngineState.Blocked => Color.Firebrick,
             EngineState.Idle => Color.ForestGreen,
             _ => SystemColors.ControlText,
         };
         _mode.Text = snap.ModeText;
+        _mode.Visible = snap.ModeText.Length > 0;
         _pause.Text = snap.Paused ? "Resume" : "Pause";
         _serviceStart.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Stopped;
         _serviceStop.Visible = snap.ServiceInstalled && snap.ServiceState == ServiceControllerStatus.Running;
